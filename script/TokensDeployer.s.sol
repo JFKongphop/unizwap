@@ -14,7 +14,7 @@ contract TokensDeployer is Script {
     console.log("Deployer balance:", deployer.balance);
 
     vm.startBroadcast(deployerPrivateKey);
-  
+
     // Deploy TokenA
     TokenA tokenA = new TokenA();
     console.log("TokenA deployed at:", address(tokenA));
@@ -28,7 +28,7 @@ contract TokensDeployer is Script {
     console.log("TokenB name:", tokenB.name());
     console.log("TokenB symbol:", tokenB.symbol());
     console.log("TokenB deployer balance:", tokenB.balanceOf(deployer));
-    
+
     vm.stopBroadcast();
 
     console.log("\n=== Deployment Summary ===");
