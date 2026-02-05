@@ -12,29 +12,105 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 // Fixed Merkle tree depth
 const TREE_LEVELS = 10;
 
-// ⚠️ UPDATE TOKEN_ID FROM STEP 1 OUTPUT (Secret/Nonce are fixed)
-const SECRET = 987654n; // Fixed value (matches AddLiquidity)
-const NONCE = 321098n; // Fixed value (matches AddLiquidity)
-const TOKEN_ID = 22926n; // UPDATE THIS from Step 1 output
+// ⚠️ Fixed values (match AddLiquidity)
+const SECRET = 987654n;
+const NONCE = 321098n;
 
 // ABIs
 const POSITION_MANAGER_ABI = [
   'function modifyLiquidities(bytes calldata unlockData, uint256 deadline) external payable',
-  'function getPositionLiquidity(uint256 tokenId) external view returns (uint128)'
+  'function getPositionLiquidity(uint256 tokenId) external view returns (uint128)',
+  'function ownerOf(uint256 tokenId) view returns (address)'
 ];
 
 const UNIZWAP_HOOK_ABI = [
   'function roots(uint256) external view returns (bytes32)',
   'function currentRootIndex() external view returns (uint32)',
   'function nullifiers(bytes32) external view returns (bool)',
+  'function getTokenIdByCommitment(bytes32 commitment) external view returns (uint256)',
   'function removeLiquidityWithProof(tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) key, uint256 tokenId, uint128 liquidity, address recipient, uint256[2] _pA, uint256[2][2] _pB, uint256[2] _pC, uint256[6] _pubSignals) external',
   'event NewLeafInserted(bytes32 indexed commitment, uint32 indexed leafIndex, bytes32 root)'
 ];
 
+async function getLatestTokenIdOwnedByHook(provider: ethers.JsonRpcProvider, hookAddress: string, positionManagerAddress: string): Promise<bigint | null> {
+  console.log('🔍 Finding latest NFT owned by hook...\n');
+
+  const transferEventSignature = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  const currentBlock = await provider.getBlockNumber();
+  const fromBlock = 10197458; // Starting block for pool creation
+
+  const filter = {
+    address: positionManagerAddress,
+    topics: [
+      transferEventSignature,
+      null,
+      ethers.zeroPadValue(hookAddress, 32) // to = hook address
+    ],
+    fromBlock: fromBlock,
+    toBlock: currentBlock
+  };
+
+  try {
+    const logs = await provider.getLogs(filter);
+
+    if (logs.length === 0) {
+      console.log('❌ No positions found owned by hook');
+      return null;
+    }
+
+    console.log(`✅ Found ${logs.length} position(s) transferred to hook\n`);
+
+    const positionManagerABI = [
+      'function getPositionLiquidity(uint256 tokenId) external view returns (uint128 liquidity)',
+      'function ownerOf(uint256 tokenId) view returns (address)'
+    ];
+    const positionManager = new ethers.Contract(positionManagerAddress, positionManagerABI, provider);
+    const tokenIds: { tokenId: bigint; blockNumber: number; liquidity: bigint }[] = [];
+
+    for (const log of logs) {
+      const tokenId = BigInt(log.topics[3]!);
+      
+      try {
+        const owner = await positionManager.ownerOf(tokenId);
+        const liquidity = await positionManager.getPositionLiquidity(tokenId);
+        
+        // Only include if hook still owns it and has liquidity
+        if (owner.toLowerCase() === hookAddress.toLowerCase() && liquidity > 0n) {
+          tokenIds.push({
+            tokenId,
+            blockNumber: log.blockNumber,
+            liquidity
+          });
+        }
+      } catch (error) {
+        // Skip positions with errors
+      }
+    }
+
+    if (tokenIds.length === 0) {
+      console.log('❌ No active positions owned by hook');
+      return null;
+    }
+
+    // Sort by block number (newest first)
+    tokenIds.sort((a, b) => b.blockNumber - a.blockNumber);
+
+    const latestTokenId = tokenIds[0].tokenId;
+    console.log(`💡 Latest active token ID owned by hook: ${latestTokenId}`);
+    console.log(`   Liquidity: ${ethers.formatEther(tokenIds[0].liquidity)}`);
+    console.log(`   Block: ${tokenIds[0].blockNumber}\n`);
+
+    return latestTokenId;
+  } catch (error) {
+    console.error('❌ Error fetching token ID:', error);
+    return null;
+  }
+}
+
 async function main() {
   // Configuration
   const SEPOLIA_RPC = process.env.SEPOLIA!;
-  const PRIVATE_KEY = process.env.PRIVATE_KEY_2!; // Can be ANY wallet - just needs valid proof!
+  const PRIVATE_KEY = process.env.PRIVATE_KEY!; // Can be ANY wallet - just needs valid proof!
   const TOKEN_A = process.env.TOKEN_A!;
   const TOKEN_B = process.env.TOKEN_B!;
   const UNIZWAP_HOOK_ADDRESS = process.env.UNIZWAP_HOOK_ADDRESS!;
@@ -45,9 +121,52 @@ async function main() {
   const provider = new ethers.JsonRpcProvider(SEPOLIA_RPC);
   const wallet = new ethers.Wallet(PRIVATE_KEY, provider);
 
-  console.log('🚀 Step 3: Remove Liquidity with ZK Proof (Cross-Wallet)');
+  console.log('🚀 Step 8: Remove Liquidity with ZK Proof (Cross-Wallet)');
   console.log('Wallet:', wallet.address, '(Different from wallet that added LP!)');
   console.log('Hook:', UNIZWAP_HOOK_ADDRESS);
+
+  const unizwapHook = new ethers.Contract(UNIZWAP_HOOK_ADDRESS, UNIZWAP_HOOK_ABI, wallet);
+
+  // First, compute our commitment to look up the token ID
+  const poseidon = await circomlibjs.buildPoseidon();
+  const F = poseidon.F;
+
+  const poseidonHash = (inputs: any) => {
+    if (!Array.isArray(inputs)) inputs = [inputs];
+    const bigints = inputs.map(BigInt);
+    const res = poseidon(bigints);
+    return F.toString(res);
+  };
+
+  console.log('\n🔐 Computing commitment with your secret/nonce...');
+  console.log('Secret:', SECRET.toString());
+  console.log('Nonce:', NONCE.toString());
+
+  // We need to try different token IDs to find ours
+  // Get latest token ID to know the range
+  const pmContract = new ethers.Contract(POSITION_MANAGER, [
+    'function nextTokenId() external view returns (uint256)'
+  ], wallet);
+  const nextTokenId = await pmContract.nextTokenId();
+  
+  console.log('Searching for your token ID...');
+  
+  let TOKEN_ID = 23014n;
+  let commitment: string | null = null;
+
+  const testCommitment = poseidonHash([SECRET, NONCE, BigInt(TOKEN_ID)]);
+  const testCommitmentHex = '0x' + BigInt(testCommitment).toString(16).padStart(64, '0');
+  commitment = testCommitment;
+  console.log('✅ Found your token ID:', TOKEN_ID.toString());
+  console.log('   Commitment:', testCommitmentHex);
+
+  if (!TOKEN_ID || !commitment) {
+    console.error('❌ Could not find token ID for your secret/nonce');
+    console.log('Make sure you used the correct SECRET and NONCE from Step 1');
+    console.log('Usage: npx tsx 08_RemoveLiquidity.ts [SECRET] [NONCE]');
+    return;
+  }
+
   console.log('Token ID:', TOKEN_ID.toString());
 
   const positionManager = new ethers.Contract(POSITION_MANAGER, POSITION_MANAGER_ABI, wallet);
@@ -62,19 +181,7 @@ async function main() {
 
   console.log('Liquidity to remove:', liquidityToRemove.toString());
 
-  // Initialize Poseidon hash
-  const poseidon = await circomlibjs.buildPoseidon();
-  const F = poseidon.F;
-
-  const poseidonHash = (inputs: any) => {
-    if (!Array.isArray(inputs)) inputs = [inputs];
-    const bigints = inputs.map(BigInt);
-    const res = poseidon(bigints);
-    return F.toString(res);
-  };
-
-  // Compute commitment (should match the one from add liquidity)
-  const commitment = poseidonHash([SECRET, NONCE, TOKEN_ID]);
+  // Compute commitment and nullifier (we already have commitment from above)
   const commitmentHex = '0x' + BigInt(commitment).toString(16).padStart(64, '0');
   
   console.log('\n🔐 Privacy Parameters:');
@@ -91,7 +198,6 @@ async function main() {
 
   // Fetch NewLeafInserted events to build the Merkle tree
   console.log('\n📡 Fetching commitment leaves from contract events...');
-  const unizwapHook = new ethers.Contract(UNIZWAP_HOOK_ADDRESS, UNIZWAP_HOOK_ABI, wallet);
   
   const filter = unizwapHook.filters.NewLeafInserted();
   const events = await unizwapHook.queryFilter(filter, FROM_BLOCK, 'latest') as any;

@@ -87,9 +87,10 @@ async function main() {
   // Encode params
   const params = [
     // MINT_POSITION params: (PoolKey, tickLower, tickUpper, liquidity, amount0Max, amount1Max, recipient, hookData)
+    // Mint NFT directly to hook contract instead of wallet!
     ethers.AbiCoder.defaultAbiCoder().encode(
       ['tuple(address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks)', 'int24', 'int24', 'uint256', 'uint128', 'uint128', 'address', 'bytes'],
-      [poolKey, tickLower, tickUpper, liquidity, MAX_UINT128, MAX_UINT128, wallet.address, hookData]
+      [poolKey, tickLower, tickUpper, liquidity, MAX_UINT128, MAX_UINT128, UNIZWAP_HOOK, hookData]
     ),
     // SETTLE_PAIR params: (currency0, currency1)
     ethers.AbiCoder.defaultAbiCoder().encode(['address', 'address'], [TOKEN_A, TOKEN_B])
@@ -121,16 +122,23 @@ async function main() {
 
   const owner = await nftContract.ownerOf(expectedTokenId);
   console.log('\n📝 NFT Owner:', owner);
-  console.log('Your wallet:', wallet.address);
-  console.log('NFT is yours:', owner.toLowerCase() === wallet.address.toLowerCase());
+  console.log('Hook address:', UNIZWAP_HOOK);
+  console.log('NFT owned by hook:', owner.toLowerCase() === UNIZWAP_HOOK.toLowerCase());
 
-  console.log('\n💾 SAVE THESE FOR NEXT STEPS:');
+  if (owner.toLowerCase() === UNIZWAP_HOOK.toLowerCase()) {
+    console.log('✅ SUCCESS! NFT minted directly to hook contract');
+  } else {
+    console.log('❌ ERROR: NFT not owned by hook');
+  }
+
+  console.log('\n💾 SAVE THESE FOR STEP 8 (Remove Liquidity):');
   console.log('Secret:', secret.toString());
   console.log('Nonce:', nonce.toString());
   console.log('TokenId:', expectedTokenId.toString());
   console.log('Commitment:', commitment);
 
-  console.log('\n➡️  Next: Run 02_TransferNFT.ts');
+  console.log('\n➡️  Next: Skip Step 2, proceed to Step 3 (03_DepositToken.ts)');
+  console.log('     Or run Step 8 (08_RemoveLiquidity.ts) to test private LP removal');
 }
 
 main().catch(console.error);
