@@ -485,4 +485,147 @@ contract UnizwapHook is BaseHook, MerkleTreeWithHistory(10) {
 
     emit Withdraw(msg.sender, token, amount);
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // LIQUIDITY FUNCTIONALITY (from VaultHookHybrid)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * @notice beforeAddLiquidity: Insert commitment into merkle tree
+   * @dev User must manually transfer NFT to vault AFTER calling addLiquidity
+   * @param hookData Contains the commitment hash
+   */
+  function _beforeAddLiquidity(
+    address,
+    PoolKey calldata,
+    ModifyLiquidityParams calldata,
+    bytes calldata hookData
+  )
+    internal
+    override
+    returns (bytes4)
+  {
+    bytes32 commitment = abi.decode(hookData, (bytes32));
+
+    require(!commitments[commitment], "Commitment already used");
+    require(nextIndex < 2 ** levels, "Tree is full");
+
+    // Store commitment and insert into merkle tree
+    commitments[commitment] = true;
+    _insert(commitment);
+
+    emit NewLeafInserted(commitment, nextIndex - 1, getLastRoot());
+
+    return BaseHook.beforeAddLiquidity.selector;
+  }
+
+  /**
+   * @notice beforeRemoveLiquidity: Verify ZK proof before allowing liquidity removal
+   * @dev Hook must own NFT when calling removeLiquidity
+   * @param hookData Contains the ZK proof and public signals
+   */
+  function _beforeRemoveLiquidity(
+    address, /* sender */
+    PoolKey calldata,
+    ModifyLiquidityParams calldata params,
+    bytes calldata hookData
+  )
+    internal
+    override
+    returns (bytes4)
+  {
+    // Verify ZK proof for private LP removal
+    if (hookData.length > 0 && params.liquidityDelta < 0) {
+      // Decode: tokenId, nullifier, merkleRoot, tokenAAddress, tokenBAddress, liquidityAmount, proof
+      (
+        uint256 tokenId,
+        bytes32 nullifier,
+        bytes32 merkleRoot,
+        address tokenAAddress,
+        address tokenBAddress,
+        uint256 liquidityAmount,
+        uint256[2] memory pA,
+        uint256[2][2] memory pB,
+        uint256[2] memory pC
+      ) = abi.decode(
+        hookData, (uint256, bytes32, bytes32, address, address, uint256, uint256[2], uint256[2][2], uint256[2])
+      );
+
+      // 1. Check nullifier not used
+      require(!nullifiers[nullifier], "Position already removed privately");
+
+      // 2. Verify merkleRoot is known
+      require(isKnownRoot(merkleRoot), "Invalid merkle root");
+
+      // 3. Verify ZK proof
+      // Public signals: [merkleRoot, nullifier, tokenAAddress, tokenBAddress, tokenId, liquidityAmount]
+      uint256[6] memory pubSignals = [
+        uint256(merkleRoot),
+        uint256(nullifier),
+        uint256(uint160(tokenAAddress)),
+        uint256(uint160(tokenBAddress)),
+        tokenId,
+        liquidityAmount
+      ];
+
+      require(_verifierRemoveLq.verifyProof(pA, pB, pC, pubSignals), "Invalid ZK proof for LP removal");
+
+      // 4. Mark nullifier as used
+      nullifiers[nullifier] = true;
+    }
+
+    return BaseHook.beforeRemoveLiquidity.selector;
+  }
+
+  /**
+   * @notice Remove liquidity using ZK proof - Hook owns NFT, anyone with proof can trigger
+   * @dev This wrapper allows the hook to call PositionManager since it owns the NFT
+   * @param key The pool key
+   * @param tokenId The NFT token ID
+   * @param liquidity Amount of liquidity to remove
+   * @param recipient Address to receive the tokens
+   * @param _pA Proof component A
+   * @param _pB Proof component B
+   * @param _pC Proof component C
+   * @param _pubSignals Public signals [merkleRoot, nullifier, tokenA, tokenB, tokenId, liquidity]
+   */
+  function removeLiquidityWithProof(
+    PoolKey calldata key,
+    uint256 tokenId,
+    uint128 liquidity,
+    address recipient,
+    uint256[2] calldata _pA,
+    uint256[2][2] calldata _pB,
+    uint256[2] calldata _pC,
+    uint256[6] calldata _pubSignals
+  )
+    external
+  {
+    // Extract public signals
+    bytes32 merkleRoot = bytes32(_pubSignals[0]);
+    bytes32 nullifier = bytes32(_pubSignals[1]);
+    address tokenAAddress = address(uint160(_pubSignals[2]));
+    address tokenBAddress = address(uint160(_pubSignals[3]));
+
+    // Encode hookData with proof for beforeRemoveLiquidity hook
+    bytes memory hookData =
+      abi.encode(tokenId, nullifier, merkleRoot, tokenAAddress, tokenBAddress, uint256(liquidity), _pA, _pB, _pC);
+
+    // Encode actions: DECREASE_LIQUIDITY, CLOSE_CURRENCY, CLOSE_CURRENCY
+    bytes memory actions =
+      abi.encodePacked(uint8(Actions.DECREASE_LIQUIDITY), uint8(Actions.CLOSE_CURRENCY), uint8(Actions.CLOSE_CURRENCY));
+
+    // Encode params
+    bytes[] memory params = new bytes[](3);
+    params[0] = abi.encode(tokenId, liquidity, 0, 0, hookData);
+    params[1] = abi.encode(key.currency0);
+    params[2] = abi.encode(key.currency1);
+
+    bytes memory unlockData = abi.encode(actions, params);
+
+    // Call PositionManager - Hook owns NFT so this works!
+    positionManager.modifyLiquidities(unlockData, block.timestamp + 3600);
+
+    emit LiquidityRemoved(nullifier, tokenId, recipient, liquidity);
+  }
 }
