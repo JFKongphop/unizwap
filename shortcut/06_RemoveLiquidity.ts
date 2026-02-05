@@ -266,8 +266,8 @@ async function main() {
     merkle_path: pathElements.map((x: any) => x.toString())
   };
 
-  const wasmPath = path.join(__dirname, '../../proof/lp/unizwap-removelp.wasm');
-  const zkeyPath = path.join(__dirname, '../../proof/lp/unizwap-removelp.zkey');
+  const wasmPath = path.join(__dirname, '../../circuit/lp/unizwap-removelp.wasm');
+  const zkeyPath = path.join(__dirname, '../../circuit/lp/unizwap-removelp.zkey');
 
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, wasmPath, zkeyPath);
 
