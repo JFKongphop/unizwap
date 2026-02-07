@@ -124,6 +124,7 @@ export const WalletProvider: React.FC<WalletProviderProps> = ({ children }: Wall
         window.ethereum.removeAllListeners('chainChanged');
       };
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account]);
 
   return (
