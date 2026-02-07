@@ -1,0 +1,79 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.26;
+
+import {Script} from "forge-std/Script.sol";
+import {IERC20} from "forge-std/interfaces/IERC20.sol";
+
+import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
+import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {IPositionManager} from "@uniswap/v4-periphery/src/interfaces/IPositionManager.sol";
+import {IPermit2} from "permit2/src/interfaces/IPermit2.sol";
+
+import {IUniswapV4Router04} from "hookmate/interfaces/router/IUniswapV4Router04.sol";
+import {AddressConstants} from "hookmate/constants/AddressConstants.sol";
+
+import {Deployers} from "./Deployers.sol";
+
+/// @notice Shared configuration for vault-hook scripts
+contract BaseScript is Script, Deployers {
+  address immutable deployerAddress;
+
+  /////////////////////////////////////
+  // --- Configure These for VaultHook ---
+  /////////////////////////////////////
+  IERC20 internal constant token0 = IERC20(0xa018A255881e0525831Df7bCDf9A03D1B06E1790);
+  IERC20 internal constant token1 = IERC20(0xF335a9B58f2AA6A2f884d2dA4E308F7378A4CF7e);
+  IHooks constant hookContract = IHooks(0xc918011AAf437a07552a3212e29caEf22F1f0ac4); // VaultHook - afterSwapReturnDelta
+  /////////////////////////////////////
+
+  Currency immutable currency0;
+  Currency immutable currency1;
+
+  constructor() {
+    // Make sure artifacts are available, either deploy or configure.
+    deployArtifacts();
+
+    deployerAddress = getDeployer();
+
+    (currency0, currency1) = getCurrencies();
+
+    vm.label(address(permit2), "Permit2");
+    vm.label(address(poolManager), "V4PoolManager");
+    vm.label(address(positionManager), "V4PositionManager");
+    vm.label(address(swapRouter), "V4SwapRouter");
+
+    vm.label(address(token0), "Currency0");
+    vm.label(address(token1), "Currency1");
+
+    vm.label(address(hookContract), "VaultHookContract");
+  }
+
+  function _etch(address target, bytes memory bytecode) internal override {
+    if (block.chainid == 31_337) {
+      vm.rpc("anvil_setCode", string.concat('["', vm.toString(target), '",', '"', vm.toString(bytecode), '"]'));
+    } else {
+      revert("Unsupported etch on this network");
+    }
+  }
+
+  function getCurrencies() internal pure returns (Currency, Currency) {
+    require(address(token0) != address(token1));
+
+    if (token0 < token1) {
+      return (Currency.wrap(address(token0)), Currency.wrap(address(token1)));
+    } else {
+      return (Currency.wrap(address(token1)), Currency.wrap(address(token0)));
+    }
+  }
+
+  function getDeployer() internal returns (address) {
+    address[] memory wallets = vm.getWallets();
+
+    if (wallets.length > 0) {
+      return wallets[0];
+    } else {
+      return msg.sender;
+    }
+  }
+}
