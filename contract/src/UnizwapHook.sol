@@ -173,7 +173,7 @@ contract UnizwapHook is BaseHook, MerkleTreeWithHistory(10) {
     // Process hookData BEFORE swap execution
     if (hookData.length > 0) {
       // Decode hookData for validation
-      (address user, uint256 minOutput, string memory refCode, bool isActive, string memory pattern, bytes32 commitment)
+      (address user,,, , string memory pattern,)
       = abi.decode(hookData, (address, uint256, string, bool, string, bytes32));
 
       // Validate user matches caller
@@ -376,25 +376,6 @@ contract UnizwapHook is BaseHook, MerkleTreeWithHistory(10) {
     uint256 amountIn;
     uint256 amountOut;
 
-    if (hookData.length > 0) {
-      (address user, uint256 amount, string memory refCode, bool isActive, string memory pattern, bytes32 commitment) =
-        abi.decode(hookData, (address, uint256, string, bool, string, bytes32));
-      actualUser = user;
-
-      // Validate pattern is "router"
-      require(keccak256(bytes(pattern)) == keccak256(bytes("router")), "Invalid pattern for router swap");
-
-      // Store hookData after swap execution
-      swapHookData[key.toId()][sender] = HookData({
-        user: user,
-        amount: amount,
-        refCode: refCode,
-        isActive: isActive,
-        pattern: pattern,
-        commitment: commitment
-      });
-    }
-
     // Calculate amounts
     int128 outputDelta = params.zeroForOne ? delta.amount1() : delta.amount0();
     amountOut = outputDelta > 0 ? uint256(int256(outputDelta)) : 0;
@@ -580,10 +561,10 @@ contract UnizwapHook is BaseHook, MerkleTreeWithHistory(10) {
   /**
    * @notice Remove liquidity using ZK proof - Hook owns NFT, anyone with proof can trigger
    * @dev This wrapper allows the hook to call PositionManager since it owns the NFT
+   * @dev Tokens are sent to msg.sender (caller with valid proof)
    * @param key The pool key
    * @param tokenId The NFT token ID
    * @param liquidity Amount of liquidity to remove
-   * @param recipient Address to receive the tokens
    * @param _pA Proof component A
    * @param _pB Proof component B
    * @param _pC Proof component C
@@ -593,7 +574,6 @@ contract UnizwapHook is BaseHook, MerkleTreeWithHistory(10) {
     PoolKey calldata key,
     uint256 tokenId,
     uint128 liquidity,
-    address recipient,
     uint256[2] calldata _pA,
     uint256[2][2] calldata _pB,
     uint256[2] calldata _pC,
@@ -611,21 +591,21 @@ contract UnizwapHook is BaseHook, MerkleTreeWithHistory(10) {
     bytes memory hookData =
       abi.encode(tokenId, nullifier, merkleRoot, tokenAAddress, tokenBAddress, uint256(liquidity), _pA, _pB, _pC);
 
-    // Encode actions: DECREASE_LIQUIDITY, CLOSE_CURRENCY, CLOSE_CURRENCY
+    // Encode actions: DECREASE_LIQUIDITY, TAKE, TAKE
     bytes memory actions =
-      abi.encodePacked(uint8(Actions.DECREASE_LIQUIDITY), uint8(Actions.CLOSE_CURRENCY), uint8(Actions.CLOSE_CURRENCY));
+      abi.encodePacked(uint8(Actions.DECREASE_LIQUIDITY), uint8(Actions.TAKE), uint8(Actions.TAKE));
 
-    // Encode params
+    // Encode params - tokens go to msg.sender (caller with proof)
     bytes[] memory params = new bytes[](3);
     params[0] = abi.encode(tokenId, liquidity, 0, 0, hookData);
-    params[1] = abi.encode(key.currency0);
-    params[2] = abi.encode(key.currency1);
+    params[1] = abi.encode(key.currency0, msg.sender, uint256(0)); // TAKE: (currency, recipient, amount)
+    params[2] = abi.encode(key.currency1, msg.sender, uint256(0)); // TAKE: (currency, recipient, amount)
 
     bytes memory unlockData = abi.encode(actions, params);
 
     // Call PositionManager - Hook owns NFT so this works!
     positionManager.modifyLiquidities(unlockData, block.timestamp + 3600);
 
-    emit LiquidityRemoved(nullifier, tokenId, recipient, liquidity);
+    emit LiquidityRemoved(nullifier, tokenId, msg.sender, liquidity);
   }
 }
