@@ -13,8 +13,9 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 const TREE_LEVELS = 10;
 
 // ⚠️ Fixed values (match AddLiquidity)
-const SECRET = 987654n;
-const NONCE = 321098n;
+const SECRET = 11n;
+const NONCE = 22n;
+const TOKEN_ID = 23149n; // NFT minted from AddLiquidity
 
 // ABIs
 const POSITION_MANAGER_ABI = [
@@ -142,31 +143,13 @@ async function main() {
   console.log('Secret:', SECRET.toString());
   console.log('Nonce:', NONCE.toString());
 
-  // We need to try different token IDs to find ours
-  // Get latest token ID to know the range
-  const pmContract = new ethers.Contract(POSITION_MANAGER, [
-    'function nextTokenId() external view returns (uint256)'
-  ], wallet);
-  const nextTokenId = await pmContract.nextTokenId();
+  // Use the hardcoded TOKEN_ID from the top of the file
+  console.log('Using token ID:', TOKEN_ID.toString());
   
-  console.log('Searching for your token ID...');
-  
-  let TOKEN_ID = 23014n;
-  let commitment: string | null = null;
-
   const testCommitment = poseidonHash([SECRET, NONCE, BigInt(TOKEN_ID)]);
   const testCommitmentHex = '0x' + BigInt(testCommitment).toString(16).padStart(64, '0');
-  commitment = testCommitment;
-  console.log('✅ Found your token ID:', TOKEN_ID.toString());
-  console.log('   Commitment:', testCommitmentHex);
-
-  if (!TOKEN_ID || !commitment) {
-    console.error('❌ Could not find token ID for your secret/nonce');
-    console.log('Make sure you used the correct SECRET and NONCE from Step 1');
-    console.log('Usage: npx tsx 08_RemoveLiquidity.ts [SECRET] [NONCE]');
-    return;
-  }
-
+  const commitment = testCommitment;
+  console.log('✅ Commitment calculated:', testCommitmentHex);
   console.log('Token ID:', TOKEN_ID.toString());
 
   const positionManager = new ethers.Contract(POSITION_MANAGER, POSITION_MANAGER_ABI, wallet);
@@ -266,8 +249,8 @@ async function main() {
     merkle_path: pathElements.map((x: any) => x.toString())
   };
 
-  const wasmPath = path.join(__dirname, '../../circuit/lp/unizwap-removelp.wasm');
-  const zkeyPath = path.join(__dirname, '../../circuit/lp/unizwap-removelp.zkey');
+  const wasmPath = path.join(__dirname, '../../proof/lp/unizwap-removelp.wasm');
+  const zkeyPath = path.join(__dirname, '../../proof/lp/unizwap-removelp.zkey');
 
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, wasmPath, zkeyPath);
 

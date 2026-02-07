@@ -139,9 +139,9 @@ async function main() {
     merkle_path: pathElements.map((x: any) => x.toString())
   };
 
-  const wasmPath = path.join(__dirname, '..', '..', 'circuit', 'swap', 'unizwap.wasm');
-  const zkeyPath = path.join(__dirname, '..', '..', 'circuit', 'swap', 'unizwap.zkey');
-  const vkeyPath = path.join(__dirname, '..', '..', 'circuit', 'swap', 'verification_key.json');
+  const wasmPath = path.join(__dirname, '..', '..', 'proof', 'swap', 'unizwap.wasm');
+  const zkeyPath = path.join(__dirname, '..', '..', 'proof', 'swap', 'unizwap.zkey');
+  const vkeyPath = path.join(__dirname, '..', '..', 'proof', 'swap', 'verification_key.json');
 
   console.log('🔨 Generating proof...');
   const { proof, publicSignals } = await snarkjs.groth16.fullProve(input, wasmPath, zkeyPath);
