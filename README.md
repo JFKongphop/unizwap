@@ -23,12 +23,7 @@
 - [Developer Guide](#-developer-guide)
 - [Usage Guide](#-usage-guide)
 - [Security Considerations](#-security-considerations)
-- [Limitations](#️-limitations)
 - [Future Work / Roadmap](#-future-work--roadmap)
-- [Contract Deployment & Usage](#-contract-deployment--usage)
-- [Additional Resources](#-additional-resources)
-- [Advanced Usage](#-advanced-usage)
-- [External Resources](#-external-resources)
 - [License](#-license)
 
 ## 🎯 Project Overview
@@ -677,120 +672,166 @@ nullifier = Poseidon(secret, tokenId)
 
 ## 👨‍💻 Developer Guide
 
-### Install
+### Prerequisites
+
+```bash
+# Install Foundry
+curl -L https://foundry.paradigm.xyz | bash
+foundryup
+
+# Install Node.js dependencies
+pnpm install
+```
+
+### Setup
 
 ```bash
 # Clone repository
 git clone https://github.com/yourusername/unizwap.git
-cd unizwap
+cd unizwap/contract
 
-# Install dependencies
-forge install
-pnpm install
-```
-
-### Build
-
-```bash
-# Compile smart contracts
-forge build
-
-# Compile ZK circuits
-pnpm circuit:compile
-
-# Generate verifiers
-pnpm circuit:verifier
-```
-
-### Test
-
-```bash
-# Run contract tests
-forge test
-
-# Run circuit tests
-pnpm circuit:test
-
-# Run specific test
-forge test --match-test testSwapWithPrivacy -vvv
-```
-
-### Deploy
-
-```bash
-# 1. Set environment variables
+# Copy environment file
 cp .env.example .env
-# Edit .env with your private key and RPC URL
+# Edit .env with your PRIVATE_KEY and SEPOLIA RPC URL
+```
 
-# 2. Deploy verifiers
-pnpm circuit:deploy
+### Build & Deploy
 
-# 3. Deploy UnizwapHook
+```bash
+# Build contracts
+make build
+
+# Deploy UnizwapHook
 make deploy
 
-# 4. Verify contracts
+# Verify on Etherscan
 make verify
 ```
 
-### Run Scripts
+### Quick Testing with Makefile
+
+The Makefile provides shortcuts for testing the complete flow:
 
 ```bash
-# Complete flow
-cd shortcut/unizwap-hook
+# Individual operations
+make cp              # Create pool
+make ap              # Add liquidity
+make transfer-nft    # Transfer NFT to hook
+make deposit         # Deposit tokens (vault pattern)
+make swap-vault      # Swap with vault
+make sr              # Swap with router
+make withdraw-vault  # Withdraw private (vault)
+make wr              # Withdraw private (router)
+make rl              # Remove liquidity
 
-# 1. Create pool
-npx tsx 01_CreatePool.ts
+# Run complete flow
+make full-flow
 
-# 2. Add liquidity
-npx tsx 02_AddLiquidity.ts
+# Show all available commands
+make help
+```
 
-# 3. Approve tokens
-npx tsx 03_ApproveTokens.ts
+### Manual Testing
 
-# 4. Swap
-npx tsx 04_SwapRouter.ts
+You can also run scripts directly:
 
-# 5. Withdraw privately
-npx tsx 07_WithdrawRouter.ts
+```bash
+cd contract/shortcut
 
-# 6. Remove liquidity
-npx tsx 08_RemoveLiquidity.ts
+# Router pattern (recommended)
+npx tsx 00_CreatePool.ts
+npx tsx 01_AddLiquidity.ts
+npx tsx 02_TransferNFT.ts
+npx tsx 04_SwapWithRouter.ts
+npx tsx 05_WithdrawPrivateRouter.ts
+npx tsx 06_RemoveLiquidity.ts
+```
+
+### ZK Circuit Setup
+
+```bash
+# Compile circuits
+cd circuit
+circom swap/unizwap-withdraw.circom --r1cs --wasm --sym -o swap/
+circom lp/unizwap-removelp.circom --r1cs --wasm --sym -o lp/
+
+# Generate proving keys (requires Powers of Tau ceremony)
+snarkjs groth16 setup swap/unizwap-withdraw.r1cs powersOfTau28_hez_final_15.ptau swap/unizwap.zkey
+snarkjs groth16 setup lp/unizwap-removelp.r1cs powersOfTau28_hez_final_15.ptau lp/unizwap-removelp.zkey
+
+# Export verification keys
+snarkjs zkey export verificationkey swap/unizwap.zkey swap/verification_key.json
+snarkjs zkey export verificationkey lp/unizwap-removelp.zkey lp/verification_key.json
+
+# Generate Solidity verifiers
+snarkjs zkey export solidityverifier swap/unizwap.zkey ../src/SwapWithdrawGroth16Verifier.sol
+snarkjs zkey export solidityverifier lp/unizwap-removelp.zkey ../src/RemoveLpGroth16Verifier.sol
+```
+
+### Testing
+
+```bash
+# Run all tests
+forge test
+
+# Run specific test
+forge test --match-test testSwapWithPrivacy -vvv
+
+# Run with gas reporting
+forge test --gas-report
+
+# Run with coverage
+forge coverage
 ```
 
 ## 📖 Usage Guide
 
-### 1. Deposit (Approve Tokens)
+### Quick Start with Shortcut Scripts
 
-```typescript
-// Approve tokens to SwapRouter
-await tokenContract.approve(SWAP_ROUTER_ADDRESS, amount);
+The easiest way to test Unizwap is using the shortcut scripts in `contract/shortcut/`:
+
+```bash
+cd contract/shortcut
+
+# Complete flow (run in order):
+npx tsx 00_CreatePool.ts              # Create Uniswap V4 pool
+npx tsx 01_AddLiquidity.ts            # Add liquidity with commitment
+npx tsx 02_SwapWithRouter.ts          # Swap with privacy commitment
+npx tsx 03_WithdrawPrivate_Router.ts  # Withdraw with ZK proof
+npx tsx 04_RemoveLiquidity.ts         # Remove LP with ZK proof
 ```
 
-### 2. Swap
+### Detailed Usage Examples
+
+### 1. Create Pool
+
+**Script**: [`00_CreatePool.ts`](contract/shortcut/00_CreatePool.ts)
 
 ```typescript
-// Generate privacy params
+// Initialize Uniswap V4 pool with UnizwapHook
+const poolKey = {
+  currency0: tokenA.address,
+  currency1: tokenB.address,
+  fee: 3000, // 0.3%
+  tickSpacing: 60,
+  hooks: hookAddress // UnizwapHook address
+};
+
+await poolManager.initialize(poolKey, sqrtPriceX96);
+```
+
+### 2. Add Liquidity with Privacy
+
+**Script**: [`01_AddLiquidity.ts`](contract/shortcut/01_AddLiquidity.ts)
+
+```typescript
+// Generate commitment for LP privacy
 const secret = BigInt(randomValue);
 const nonce = BigInt(randomValue);
-const commitment = poseidon([secret, nonce]);
-
-// Execute swap with commitment
-const hookData = ethers.AbiCoder.defaultAbiCoder().encode(
-  ["address", "uint256", "string", "bool", "string", "bytes32"],
-  [userAddress, minOutput, refCode, true, "router", commitment]
-);
-
-await swapRouter.swap(poolKey, swapParams, hookData);
-```
-
-### 3. Add LP
-
-```typescript
-// Generate commitment
 const tokenId = await positionManager.nextTokenId();
 const commitment = poseidon([secret, nonce, tokenId]);
 
-// Add liquidity with commitment
+// Add liquidity with commitment in hookData
 const hookData = ethers.AbiCoder.defaultAbiCoder().encode(
   ["bytes32"],
   [commitment]
@@ -798,31 +839,121 @@ const hookData = ethers.AbiCoder.defaultAbiCoder().encode(
 
 await positionManager.modifyLiquidities(unlockData, deadline);
 
-// Transfer NFT to hook
+// Transfer NFT to hook for privacy
 await positionManager.transferFrom(userAddress, hookAddress, tokenId);
 ```
 
-### 4. Withdraw Private
+### 3. Swap with Privacy
+
+**Script**: [`02_SwapWithRouter.ts`](contract/shortcut/02_SwapWithRouter.ts)
 
 ```typescript
-// Generate ZK proof
-const { proof, publicSignals } = await generateProof({
-  secret,
-  nonce,
-  merkleRoot,
-  merklePath,
-  merklePathIndices
-});
+// Generate privacy params
+const secret = 333333n;
+const nonce = 444444n;
+const token_address = BigInt(TOKEN_B); // Output token
+const deposit_amount = 1000n; // Symbolic amount
 
-// Withdraw to different wallet
+// Calculate commitment: H(token_address, deposit_amount, H(secret, nonce))
+const secretHash = poseidon([secret, nonce]);
+const commitment = poseidon([token_address, deposit_amount, secretHash]);
+const commitmentBytes32 = ethers.toBeHex(commitment, 32);
+
+// Encode hookData with commitment
+const hookData = ethers.AbiCoder.defaultAbiCoder().encode(
+  ["address", "uint256", "string", "bool", "string", "bytes32"],
+  [userAddress, minOutput, "ROUTER_REF", true, "router", commitmentBytes32]
+);
+
+// Execute swap through SwapRouter
+const deadline = Math.floor(Date.now() / 1000) + 300;
+await swapRouter.swapExactTokensForTokens(
+  amountIn,        // Amount to swap
+  minOutput,       // Minimum output
+  true,            // zeroForOne
+  poolKey,         // Pool configuration
+  hookData,        // Commitment data
+  wallet.address,  // Receiver
+  deadline         // Deadline
+);
+```
+
+### 4. Withdraw with ZK Proof
+
+**Script**: [`03_WithdrawPrivate_Router.ts`](contract/shortcut/03_WithdrawPrivate_Router.ts)
+
+```typescript
+// Generate ZK proof (different wallet can withdraw)
+const input = {
+  merkle_root: merkleRoot,
+  nullifier: nonce, // For swap withdrawal, nullifier = nonce
+  token_address: tokenAddress,
+  deposit_amount: amount,
+  secret: secret,
+  nonce: nonce,
+  merkle_pathIndices: pathIndices,
+  merkle_path: pathElements
+};
+
+const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+  input,
+  "circuit/swap/unizwap-withdraw.wasm",
+  "circuit/swap/unizwap.zkey"
+);
+
+// Withdraw to any wallet with valid proof
 await hook.withdrawPrivate(
   commitment,
-  proof.pA,
-  proof.pB,
-  proof.pC,
+  tokenAddress,
+  [proof.pi_a[0], proof.pi_a[1]],
+  [[proof.pi_b[0][1], proof.pi_b[0][0]], [proof.pi_b[1][1], proof.pi_b[1][0]]],
+  [proof.pi_c[0], proof.pi_c[1]],
   publicSignals
 );
 ```
+
+### 5. Remove Liquidity with ZK Proof
+
+**Script**: [`04_RemoveLiquidity.ts`](contract/shortcut/04_RemoveLiquidity.ts)
+
+```typescript
+// Generate ZK proof for LP removal
+const input = {
+  merkle_root: merkleRoot,
+  nullifier: poseidon([secret, tokenId]),
+  tokenAAddress: tokenA.address,
+  tokenBAddress: tokenB.address,
+  tokenId: tokenId,
+  liquidityAmount: liquidityToRemove,
+  secret: secret,
+  nonce: nonce,
+  merkle_pathIndices: pathIndices,
+  merkle_path: pathElements
+};
+
+const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+  input,
+  "circuit/lp/unizwap-removelp.wasm",
+  "circuit/lp/unizwap-removelp.zkey"
+);
+
+// Remove liquidity to any wallet with valid proof
+await hook.removeLiquidityWithProof(
+  poolKey,
+  liquidityDelta,
+  [proof.pi_a[0], proof.pi_a[1]],
+  [[proof.pi_b[0][1], proof.pi_b[0][0]], [proof.pi_b[1][1], proof.pi_b[1][0]]],
+  [proof.pi_c[0], proof.pi_c[1]],
+  publicSignals
+);
+```
+
+### Privacy Tips
+
+1. **Save your secret and nonce**: Store them securely - you need them to withdraw/remove LP
+2. **Use different wallets**: Withdraw to a different wallet than you deposited from for maximum privacy
+3. **Wait between operations**: Add random delays to avoid timing correlation
+4. **Use common amounts**: Avoid unique amounts that can be fingerprinted
 
 ## 🔒 Security Considerations
 
@@ -848,32 +979,6 @@ await hook.withdrawPrivate(
 - Only proof holder can remove liquidity
 
 **Auditing Status**: ⚠️ Not audited yet. Use at your own risk on testnet.
-
-## ⚠️ Limitations
-
-### UX Challenges
-- Users must manage secret/nonce
-- ZK proof generation requires local computation
-- Multiple transactions for complete privacy flow
-- Gas costs higher than normal swaps
-
-### Gas Costs
-- Swap withdrawal proof verification: ~250K gas
-- LP removal proof verification: ~280K gas
-- Merkle tree insertion: ~60K gas
-- Total overhead: ~3-5x normal swap gas
-
-### Proof Generation Time
-- Browser-based: 5-15 seconds
-- Server-side: 2-5 seconds
-- Depends on device performance
-- Can be optimized with worker threads
-
-### Pool Compatibility
-- Works with any Uniswap V4 pool
-- Requires hook address in pool key
-- Must be set during pool creation
-- Cannot retrofit existing pools without hooks
 
 ## 🚀 Future Work / Roadmap
 
@@ -903,312 +1008,7 @@ await hook.withdrawPrivate(
 - **Tree migration**: Allow users to migrate commitments to new trees without revealing positions
 - **Optimized proof verification**: Batch verify multiple proofs in a single transaction
 
-## 📦 Contract Deployment & Usage
-- Multiple root history (prevents race conditions)
-- Pure Solidity implementation
-
-**Verifier Contracts**
-- Auto-generated by SnarkJS from Circom circuits
-- Groth16 proof verification
-- Gas-optimized for on-chain execution
-
-### Hook Permissions Explained
-
-```solidity
-function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
-  return Hooks.Permissions({
-    beforeSwap: true,           // Track swap intent
-    afterSwap: true,             // Capture output, store by commitment
-    afterSwapReturnDelta: true,  // Claim output tokens to hook
-    beforeAddLiquidity: true,    // Insert commitment for LP privacy
-    beforeRemoveLiquidity: true, // Verify ZK proof for LP removal
-    // All others: false
-  });
-}
-```
-
-**Why these permissions?**
-- `beforeSwap`: Increment counter, prepare for swap
-- `afterSwap`: Capture output tokens, store by commitment, insert to Merkle tree
-- `afterSwapReturnDelta`: Required to claim output tokens from pool to hook
-- `beforeAddLiquidity`: Insert LP commitment into Merkle tree
-- `beforeRemoveLiquidity`: Verify ZK proof before allowing liquidity removal
-
-## 🔬 ZK Design
-
-Besides obvious improvements like supporting all Uniswap V4 pool features and optimizing gas costs, Unizwap's roadmap includes:
-
-### Current Limitation: Merkle Tree Depth
-
-In Unizwap v1 (current design), the Merkle tree depth is limited to 10 levels, supporting 1024 commitments per tree. After the tree is full, a new tree must be deployed.
-
-This works for initial deployment but creates UX friction when users need to track which tree their commitment belongs to.
-
-### Future Feature: Scalable Merkle Tree
-
-In future versions of Unizwap, we aim to support:
-• **Dynamic tree expansion**: Automatically expand tree depth when approaching capacity
-• **Multiple tree support**: Seamlessly support proofs across multiple trees
-• **Tree migration**: Allow users to migrate commitments to new trees without revealing positions
-• **Optimized proof verification**: Batch verify multiple proofs in a single transaction
-
-We're excited about the scalability, privacy preservation, and UX improvements this will unlock in the world of decentralized exchanges.
-
-## 📦 Contract Deployment & Usage
-
-The contract can be deployed on Sepolia with the following commands:
-
-```bash
-# Install dependencies
-forge install
-pnpm install
-
-# Compile contracts
-forge build
-
-# Deploy UnizwapHook
-make deploy
-
-# Verify on Etherscan
-make verify
-```
-
-The deployment scripts are located in:
-- `script/vault-hook/00_DeployUnizwapHook.s.sol` - Main hook deployment
-
-### Frontend
-
-The frontend can be run in development mode:
-
-```bash
-cd frontend
-pnpm install
-cp .env.example .env
-pnpm dev
-```
-
-Then open [http://localhost:3000](http://localhost:3000)
-
-### ZK Circuits
-
-Compile and test the Circom circuits:
-
-```bash
-# Compile circuits
-pnpm circuit:compile
-
-# Run circuit tests
-pnpm circuit:test
-
-# Generate verifiers
-pnpm circuit:verifier
-
-# Deploy verifiers
-pnpm circuit:deploy
-```
-
-### Complete Flow Examples
-
-**Router Pattern (Primary Implementation):**
-
-```bash
-# 1. Deploy hook
-make deploy
-
-# 2. Create pool
-npx tsx shortcut/unizwap-hook/01_CreatePool.ts
-
-# 3. Add liquidity with commitment
-npx tsx shortcut/unizwap-hook/02_AddLiquidity.ts
-
-# 4. Approve tokens
-npx tsx shortcut/unizwap-hook/03_ApproveTokens.ts
-
-# 5. Swap directly
-npx tsx shortcut/unizwap-hook/04_SwapRouter.ts
-
-# 6. Withdraw privately with ZK proof
-npx tsx shortcut/unizwap-hook/07_WithdrawRouter.ts
-
-# 7. Remove liquidity with ZK proof
-npx tsx shortcut/unizwap-hook/08_RemoveLiquidity.ts
-```
-
-## 📚 Additional Resources
-
-- [Vault Features Guide](VAULT_FEATURES.md) - Advanced features for vault pattern
-- [ZK Integration Guide](ZK_INTEGRATION.md) - Detailed ZK proof implementation
-- [Private LP Flow](PRIVATE_LP_FLOW.md) - Complete private liquidity provision flow
-- [Vault vs Router Patterns](VAULT_VS_ROUTER_PATTERNS.md) - Pattern comparison
-- [Hook Data Flow](HOOKDATA_FLOW.md) - Hook execution flow details
-
-**Smart Contracts:**
-- `UnizwapHook.sol` - Main unified hook combining swap and liquidity privacy
-- `VaultHook.sol` - Vault pattern implementation with swap privacy
-- `VaultHookHybrid.sol` - Hybrid approach with LP privacy
-- `UnizwapHookAdvanced.sol` - Advanced features (MEV protection, multi-hop)
-
-**ZK Circuits:**
-- `proof/swap/` - Swap withdrawal proof circuits
-- `proof/lp/` - Liquidity removal proof circuits
-- `proof/multihop/` - Multi-hop swap authorization circuits
-
-**Scripts:**
-- `script/vault-hook/` - Hook deployment scripts
-- `shortcut/unizwap-hook/` - Main router pattern scripts for all operations
-- `shortcut/` - Quick scripts organized by hook type
-
-## 🔧 Advanced Usage
-
-1. Start Anvil (or fork a specific chain using anvil):
-
-```bash
-anvil
-```
-
-or
-
-```bash
-anvil --fork-url <YOUR_RPC_URL>
-```
-
-2. Execute scripts:
-
-```bash
-forge script script/00_DeployHook.s.sol \
-    --rpc-url http://localhost:8545 \
-    --private-key <PRIVATE_KEY> \
-    --broadcast
-```
-
-### Using **RPC URLs** (actual transactions):
-
-:::info
-It is best to not store your private key even in .env or enter it directly in the command line. Instead use the `--account` flag to select your private key from your keystore.
-:::
-
-### Follow these steps if you have not stored your private key in the keystore:
-
-<details>
-
-1. Add your private key to the keystore:
-
-```bash
-cast wallet import <SET_A_NAME_FOR_KEY> --interactive
-```
-
-2. You will prompted to enter your private key and set a password, fill and press enter:
-
-```
-Enter private key: <YOUR_PRIVATE_KEY>
-Enter keystore password: <SET_NEW_PASSWORD>
-```
-
-You should see this:
-
-```
-`<YOUR_WALLET_PRIVATE_KEY_NAME>` keystore was saved successfully. Address: <YOUR_WALLET_ADDRESS>
-```
-
-::: warning
-Use `history -c` to clear your command history.
-:::
-
-</details>
-
-1. Execute scripts:
-
-```bash
-forge script script/00_DeployHook.s.sol \
-    --rpc-url <YOUR_RPC_URL> \
-    --account <YOUR_WALLET_PRIVATE_KEY_NAME> \
-    --sender <YOUR_WALLET_ADDRESS> \
-    --broadcast
-```
-
-You will prompted to enter your wallet password, fill and press enter:
-
-```
-Enter keystore password: <YOUR_PASSWORD>
-```
-
-### Key Modifications to note:
-
-1. Update the `token0` and `token1` addresses in the `BaseScript.sol` file to match the tokens you want to use in the network of your choice for sepolia and mainnet deployments.
-2. Update the `token0Amount` and `token1Amount` in the `CreatePoolAndAddLiquidity.s.sol` file to match the amount of tokens you want to provide liquidity with.
-3. Update the `token0Amount` and `token1Amount` in the `AddLiquidity.s.sol` file to match the amount of tokens you want to provide liquidity with.
-4. Update the `amountIn` and `amountOutMin` in the `Swap.s.sol` file to match the amount of tokens you want to swap.
-
-### Verifying the hook contract
-
-```bash
-forge verify-contract \
-  --rpc-url <URL> \
-  --chain <CHAIN_NAME_OR_ID> \
-  # Generally etherscan
-  --verifier <Verification_Provider> \
-  # Use --etherscan-api-key <ETHERSCAN_API_KEY> if you are using etherscan
-  --verifier-api-key <Verification_Provider_API_KEY> \
-  --constructor-args <ABI_ENCODED_ARGS> \
-  --num-of-optimizations <OPTIMIZER_RUNS> \
-  <Contract_Address> \
-  <path/to/Contract.sol:ContractName>
-  --watch
-```
-
-### Troubleshooting
-
-<details>
-
-#### Permission Denied
-
-When installing dependencies with `forge install`, Github may throw a `Permission Denied` error
-
-Typically caused by missing Github SSH keys, and can be resolved by following the steps [here](https://docs.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh)
-
-Or [adding the keys to your ssh-agent](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent#adding-your-ssh-key-to-the-ssh-agent), if you have already uploaded SSH keys
-
-#### Anvil fork test failures
-
-Some versions of Foundry may limit contract code size to ~25kb, which could prevent local tests to fail. You can resolve this by setting the `code-size-limit` flag
-
-```
-anvil --code-size-limit 40000
-```
-
-#### Hook deployment failures
-
-Hook deployment failures are caused by incorrect flags or incorrect salt mining
-
-1. Verify the flags are in agreement:
-   - `getHookCalls()` returns the correct flags
-   - `flags` provided to `HookMiner.find(...)`
-2. Verify salt mining is correct:
-   - In **forge test**: the _deployer_ for: `new Hook{salt: salt}(...)` and `HookMiner.find(deployer, ...)` are the same. This will be `address(this)`. If using `vm.prank`, the deployer will be the pranking address
-   - In **forge script**: the deployer must be the CREATE2 Proxy: `0x4e59b44847b379578588920cA78FbF26c0B4956C`
-     - If anvil does not have the CREATE2 deployer, your foundry may be out of date. You can update it with `foundryup`
-
-#### MemoryOOG Error
-
-If you encounter `MemoryOOG` error during deployment, the contract bytecode is too large. Reduce `optimizer_runs` in [foundry.toml](foundry.toml):
-
-```toml
-optimizer = true
-optimizer_runs = 200  # Lower value = smaller bytecode
-```
-
-</details>
-
-## 🔗 External Resources
-
-- [Uniswap v4 docs](https://docs.uniswap.org/contracts/v4/overview)
-- [v4-periphery](https://github.com/uniswap/v4-periphery)
-- [v4-core](https://github.com/uniswap/v4-core)
-- [v4-by-example](https://v4-by-example.org)
-- [Circom Documentation](https://docs.circom.io/)
-- [SnarkJS](https://github.com/iden3/snarkjs)
-
-## 📄 License
+##  License
 
 MIT License - see [LICENSE](LICENSE) file for details
 
