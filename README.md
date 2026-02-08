@@ -2,6 +2,35 @@
 
 > 🏆 Privacy-native decentralized exchange built on Uniswap V4 Hooks with zero-knowledge proofs
 
+## 📑 Table of Contents
+
+- [Project Overview](#-project-overview)
+- [Demo & Links](#-demo--links)
+- [Proof of Functional Code](#-proof-of-functional-code-transaction-evidence)
+  - [Deployed Contracts on Sepolia](#-deployed-contracts-on-sepolia-testnet)
+  - [Real Transaction on Sepolia Testnet](#real-transaction-on-sepolia-testnet)
+  - [How to Verify Functionality](#-how-to-verify-functionality)
+- [Key Features](#-key-features)
+- [Why Private DEX](#why-private-dex)
+- [Core Challenges](#core-challenges)
+- [Core Ideas on How Unizwap Works](#core-ideas-on-how-unizwap-works)
+- [Architecture](#️-architecture)
+- [How It Works](#-how-it-works)
+- [Privacy Analysis](#-privacy-analysis-important)
+- [Smart Contracts](#-smart-contracts)
+- [ZK Design](#-zk-design)
+- [Technical Innovations](#-technical-innovations)
+- [Developer Guide](#-developer-guide)
+- [Usage Guide](#-usage-guide)
+- [Security Considerations](#-security-considerations)
+- [Limitations](#️-limitations)
+- [Future Work / Roadmap](#-future-work--roadmap)
+- [Contract Deployment & Usage](#-contract-deployment--usage)
+- [Additional Resources](#-additional-resources)
+- [Advanced Usage](#-advanced-usage)
+- [External Resources](#-external-resources)
+- [License](#-license)
+
 ## 🎯 Project Overview
 
 **Unizwap** is a privacy-preserving decentralized exchange (DEX) protocol that brings privacy to Uniswap V4 through hooks and zero-knowledge proofs. It enables users to perform all core DeFi operations—swap, add liquidity, remove liquidity, and withdraw—while maintaining privacy through commitment-based schemes and ZK proof verification.
@@ -41,7 +70,7 @@ Unizwap solves DeFi privacy through **hook-native architecture**:
 ## 🎬 Demo & Links
 
 ### Live Demo
-- **Frontend**: [https://unizwap.vercel.app](https://unizwap.vercel.app) _(Coming soon)_
+- **Frontend**: [https://unizwap-ktkl.vercel.app](https://unizwap-ktkl.vercel.app)
 - **Sepolia Testnet**: Fully deployed and operational
 
 ### Resources
@@ -59,7 +88,7 @@ Unizwap solves DeFi privacy through **hook-native architecture**:
 | **SwapWithdrawVerifier** | [`0x548a65DbF4B2278B073544ee62cc5735a43eDE8F`](https://sepolia.etherscan.io/address/0x548a65DbF4B2278B073544ee62cc5735a43eDE8F) |
 | **RemoveLqVerifier** | [`0xD8cD6542b557dE6C78Cf29Ae94639265D0e83160`](https://sepolia.etherscan.io/address/0xD8cD6542b557dE6C78Cf29Ae94639265D0e83160) |
 
-### Real Transaction IDs on Sepolia Testnet
+### Real Transaction on Sepolia Testnet
 
 | Operation | Transaction Hash | Status |
 |-----------|------------------|--------|
@@ -83,11 +112,12 @@ Unizwap solves DeFi privacy through **hook-native architecture**:
 2. **Check Transactions**: Click any TxID above → See input data, logs, and state changes
 3. **Run Scripts Yourself**: 
    ```bash
-   cd shortcut/unizwap-hook
-   npx tsx 01_CreatePool.ts  # Creates pool
-   npx tsx 02_AddLiquidity.ts  # Adds LP with commitment
-   npx tsx 04_SwapRouter.ts  # Executes swap
-   npx tsx 07_WithdrawRouter.ts  # Withdraws with ZK proof
+   cd contract/shortcut
+   npx tsx 00_CreatePool.ts      # Creates pool
+   npx tsx 01_AddLiquidity.ts    # Adds LP with commitment
+   npx tsx 02_SwapRouter.ts      # Executes swap with commitment
+   npx tsx 03_WithdrawRouter.ts  # Withdraws with ZK proof
+   npx tsx 03_WithdrawRouter.ts  # Remove LP with ZK proof
    ```
 
 All operations are **fully on-chain** and can be verified on Sepolia Etherscan. No trusted components required.
@@ -183,7 +213,7 @@ But Everything is PUBLIC
 
 ### System Architecture
 
-![Architecture Diagram](architecture.png)
+![Architecture Diagram](Unizwap-Diagram.png)
 
 ### Core Components
 
@@ -216,28 +246,36 @@ But Everything is PUBLIC
 
 ### Information Architecture
 
-![Architecture Diagram](architecture.png)
-
 ### Global State (Public)
 
 • **Global note history**: Merkle tree of all newly created commitments when users perform operations
+
 • **Used Nullifiers**: Ensure users cannot reuse old proofs after updating their position
+
 • **Pool State**: Standard Uniswap V4 pool state (reserves, prices, liquidity)
+
 • **Commitment Deposits**: Maps commitments to token balances (commitment => token => amount)
 
 ### State Transition Info (Public but Anonymous)
 
 • **Token in**: The amount of tokens sent into the contract (for deposits and swaps)
+
 • **Token out**: The amount of tokens withdrawn from the contract (for withdrawals)
+
 • **Commitment Hash**: Each operation emits a new commitment hash to enable private withdrawals
+
 • **Nullifier Hash**: Each withdrawal emits a nullifier to prevent double-spending
 
 ### Private Note (Private Position)
 
 • **Secret**: A random secret value known only to the user
+
 • **Nonce**: A random value to ensure commitment uniqueness and unlinkability
+
 • **Nullifier**: A derived value to prevent reuse of previous positions
+
 • **Commitment**: Hash of (secret, nonce) inserted into Merkle tree
+
 • **Token balances**: Stored by commitment, not by wallet address
 
 ## 🔄 How It Works
@@ -426,18 +464,27 @@ Later: Wallet B → [ZK Proof for Commitment C] → Wallet B receives 200 TokenY
 ✓ No on-chain link between Wallet A and Wallet B
 ```
 
-#### 1inch ZK Projects vs Unizwap (Uniswap Hook ZK)
+#### Comparison: Normal Uniswap vs Unizwap
 
-| Feature | 1inch Fusion+ | Unizwap |
-|---------|--------------|----------|
-| **Architecture** | Off-chain resolvers + RFQ | On-chain hooks |
-| **Trust** | Trusted resolvers | Trustless |
-| **Privacy Scope** | Order matching | Output destination |
-| **Execution** | Off-chain then settled | Native on-chain |
-| **Compatibility** | Custom protocol | Native Uniswap V4 |
-| **MEV Protection** | Dutch auction | Commitment-based |
+| Feature | Normal Uniswap V4 | Unizwap |
+|---------|------------------|----------|
+| **Architecture** | Direct pool swaps | On-chain hooks with ZK proofs |
+| **Trust** | Trustless | Trustless |
+| **Privacy Scope** | None (fully public) | Output destination + LP ownership |
+| **Execution** | Native on-chain | Native on-chain with privacy layer |
+| **Compatibility** | Native Uniswap V4 | Native Uniswap V4 |
+| **MEV Protection** | None | Commitment-based privacy |
+| **Output Linkability** | Fully linked to wallet | Broken (cross-wallet withdrawal) |
+| **LP Ownership** | Public (address-based) | Private (commitment-based) |
+| **Gas Costs** | Standard | Higher (ZK verification ~250-280K gas) |
+| **UX Complexity** | Simple | Requires secret/nonce management |
+| **Withdrawal Flexibility** | Same wallet only | Any wallet with ZK proof |
 
-**Key Difference**: Unizwap uses native Uniswap V4 execution with hook-level privacy, while 1inch uses off-chain resolvers with trusted components.
+**Key Differences**: 
+- **Normal Uniswap V4**: All swaps and LP positions are fully public and permanently linked to user addresses. Anyone can track your trading history, positions, and balances.
+- **Unizwap**: Uses hook-level privacy with ZK proofs. Output tokens and LP positions are stored by commitments, not addresses. Users can withdraw to different wallets using zero-knowledge proofs, breaking on-chain linkability while maintaining full Uniswap V4 compatibility.
+
+**Trade-off**: Unizwap sacrifices some gas efficiency and UX simplicity to gain significant privacy improvements over standard Uniswap, while maintaining the same trustless execution model.
 
 ## 📜 Smart Contracts
 
@@ -445,11 +492,11 @@ Later: Wallet B → [ZK Proof for Commitment C] → Wallet B receives 200 TokenY
 
 | Contract | Address | Responsibility |
 |----------|---------|----------------|
-| **UnizwapHook** | `0x0bdCACc94c57EFdFc72B5a8176EE7DA975e0CaC4` | Main hook: swap + liquidity privacy |
-| **SwapWithdrawVerifier** | `0x548a65DbF4B2278B073544ee62cc5735a43eDE8F` | Verifies swap withdrawal proofs |
-| **RemoveLqVerifier** | `0xD8cD6542b557dE6C78Cf29Ae94639265D0e83160` | Verifies LP removal proofs |
-| **Uniswap V4 PoolManager** | `0xE03A1074c86CFeDd5C142C4F04F1a1536e203543` | Core Uniswap V4 pool manager |
-| **Uniswap V4 PositionManager** | `0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4` | NFT position manager |
+| **UnizwapHook** | [`0x33a0529f481140fdc2d14a47d2ce8f2b9d1e4ac4`](https://sepolia.etherscan.io/address/0x33a0529f481140fdc2d14a47d2ce8f2b9d1e4ac4) | Main hook: swap + liquidity privacy |
+| **SwapWithdrawVerifier** | [`0x548a65DbF4B2278B073544ee62cc5735a43eDE8F`](https://sepolia.etherscan.io/address/0x548a65DbF4B2278B073544ee62cc5735a43eDE8F) | Verifies swap withdrawal proofs |
+| **RemoveLqVerifier** | [`0xD8cD6542b557dE6C78Cf29Ae94639265D0e83160`](https://sepolia.etherscan.io/address/0xD8cD6542b557dE6C78Cf29Ae94639265D0e83160) | Verifies LP removal proofs |
+| **Uniswap V4 PoolManager** | [`0xE03A1074c86CFeDd5C142C4F04F1a1536e203543`](https://sepolia.etherscan.io/address/0xE03A1074c86CFeDd5C142C4F04F1a1536e203543) | Core Uniswap V4 pool manager |
+| **Uniswap V4 PositionManager** | [`0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4`](https://sepolia.etherscan.io/address/0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4) | NFT position manager |
 
 ### Contract Responsibilities
 
@@ -507,36 +554,36 @@ function getHookPermissions() public pure override returns (Hooks.Permissions me
 
 ### Circuits Used
 
-#### 1. Swap Withdrawal Circuit (`proof/swap/`)
+#### 1. Swap Withdrawal Circuit (`circuit/swap/`)
 **Purpose**: Prove ownership of a commitment to withdraw tokens
 
 **Private Inputs:**
 - `secret`: User's secret value
 - `nonce`: Random nonce for commitment
-- `merkle_path`: Merkle proof path elements
-- `merkle_pathIndices`: Path indices for proof
+- `merkle_path[10]`: Merkle proof path elements (10 levels)
+- `merkle_pathIndices[10]`: Path indices for proof (10 levels)
 
 **Public Signals:**
 ```
 [0] merkle_root    - Root of Merkle tree
-[1] nullifier      - Prevents double-spending
-[2] tokenAddress   - Token to withdraw
-[3] depositAmount  - Amount stored (for reference)
+[1] nullifier      - Prevents double-spending (equals nonce)
+[2] token_address  - Token to withdraw
+[3] deposit_amount - Amount stored
 ```
 
 **Constraints:**
-1. `commitment = Poseidon(secret, nonce)`
-2. `nullifier = Poseidon(secret, nonce, nullifierSeed)`
+1. `nullifier === nonce` (nullifier is the nonce itself)
+2. `commitment = Poseidon(token_address, deposit_amount, Poseidon(secret, nonce))`
 3. Merkle proof valid: `merkle_root = verify(commitment, path, indices)`
 
-#### 2. Liquidity Removal Circuit (`proof/lp/`)
+#### 2. Liquidity Removal Circuit (`circuit/lp/`)
 **Purpose**: Prove ownership of LP NFT position
 
 **Private Inputs:**
 - `secret`: User's secret value
 - `nonce`: Random nonce
-- `merkle_path`: Merkle proof elements
-- `merkle_pathIndices`: Path indices
+- `merkle_path[10]`: Merkle proof elements (10 levels)
+- `merkle_pathIndices[10]`: Path indices for proof (10 levels)
 
 **Public Signals:**
 ```
@@ -551,8 +598,9 @@ function getHookPermissions() public pure override returns (Hooks.Permissions me
 **Constraints:**
 1. `commitment = Poseidon(secret, nonce, tokenId)`
 2. `nullifier = Poseidon(secret, tokenId)`
-3. Merkle proof valid
-4. Token addresses match
+3. Merkle proof valid: `merkle_root = verify(commitment, path, indices)`
+4. Token addresses are non-zero (sanity check)
+5. Liquidity amount is non-zero (sanity check)
 
 ### Merkle Tree Depth
 
