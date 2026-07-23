@@ -1,0 +1,21 @@
+{
+  "name": "limitorder-keeper-bot",
+  "version": "1.0.0",
+  "description": "Keeper bot for executing TWAP-based limit orders",
+  "main": "keeper.js",
+  "type": "module",
+  "scripts": {
+    "start": "node keeper.js",
+    "dev": "nodemon keeper.js"
+  },
+  "keywords": ["uniswap", "limit-order", "keeper", "twap"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "ethers": "^6.10.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}
